@@ -41,11 +41,19 @@ SMA_LEN1 = 60
 SMA_LEN2 = 100
 SMA_LEN3 = 200
 TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
+# ==================== 參數設定 (修正版) ====================
 SYMBOLS = [
-    'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT',
-    'SOL/USDT', 'TRX/USDT', 'DOGE/USDT', 'ADA/USDT',
-    'BCH/USDT', 'LINK/USDT', 'ZEC/USDT', 'XLM/USDT',
-    'XMR/USDT', 'LTC/USDT', 'HBAR/USDT', 'AVAX/USDT'
+    'BTC/USDT', 'ETH/USDT', 
+    'XRP/USDT', 'SOL/USDT', 
+    'DOGE/USDT', 'ADA/USDT',
+    'BCH/USDT', 'LINK/USDT', 
+    'LTC/USDT', 'HBAR/USDT', 
+    'AVAX/USDT',
+    # 以下為修正後 Kraken 支援的交易對 (改用 USD)
+    'TRX/USD',  # Kraken 沒有 TRX/USDT
+    'ZEC/USD',  # Kraken 沒有 ZEC/USDT
+    'XLM/USD',  # 建議改用 USD 以確保相容性
+    'XMR/USD'   # XMR 在 Kraken 主要是 USD 配對
 ]
 
 # ==================== 狀態管理 (Session State) ====================
