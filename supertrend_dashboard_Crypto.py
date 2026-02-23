@@ -49,11 +49,11 @@ SYMBOLS = [
     'BCH/USDT', 'LINK/USDT', 
     'LTC/USDT', 'HBAR/USDT', 
     'AVAX/USDT',
-    # 以下為修正後 Crypto.com 支援的交易對 (改用 USDT)
-    'TRX/USDT',  # Crypto.com 支援 TRX/USDT
-    'ZEC/USDT',  # Crypto.com 支援 ZEC/USDT
+    # 以下為修正後 Crypto.com 支援的交易對 (改用 USD)
+    'TRX/USD',  # Crypto.com 支援 TRX/USD
+    'ZEC/USD',  # Crypto.com 支援 ZEC/USD
     'XLM/USDT',  # Crypto.com 支援 XLM/USDT
-    'XMR/USDT'   # Crypto.com 支援 XMR/USDT
+    'XMR/USD'   # Crypto.com 支援 XMR/USD
 ]
 
 # ==================== 狀態管理 (Session State) ====================
