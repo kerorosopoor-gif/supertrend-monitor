@@ -59,7 +59,8 @@ SYMBOLS = [
 def get_empty_signal_structure():
     return {'buy_0': None, 'buy_1': None, 'buy_2': None, 'buy_3': None,
             'sell_0': None, 'sell_1': None, 'sell_2': None, 'sell_3': None,
-            'pending_buy': None, 'pending_sell': None}
+            'pending_buy': None, 'pending_sell': None,
+            'last_buy_ts': None, 'last_sell_ts': None}  # 新增：防止同一信號重複警報
 
 if 'last_signals' not in st.session_state:
     st.session_state.last_signals = {symbol: {tf: get_empty_signal_structure() for tf in TIMEFRAMES} for symbol in SYMBOLS}
@@ -70,6 +71,11 @@ else:
         for tf in TIMEFRAMES:
             if tf not in st.session_state.last_signals[symbol]:
                 st.session_state.last_signals[symbol][tf] = get_empty_signal_structure()
+            else:
+                # 補齊新欄位
+                for k in ['last_buy_ts', 'last_sell_ts']:
+                    if k not in st.session_state.last_signals[symbol][tf]:
+                        st.session_state.last_signals[symbol][tf][k] = None
 
 last_signals = st.session_state.last_signals
 
@@ -90,6 +96,12 @@ last_signal_emoji = st.session_state.last_signal_emoji
 
 if 'new_signal_detected' not in st.session_state:
     st.session_state.new_signal_detected = False
+
+# 新增：自訂通知狀態
+if 'custom_notifications' not in st.session_state:
+    st.session_state.custom_notifications = []
+if 'current_prices' not in st.session_state:
+    st.session_state.current_prices = {}
 
 # ==================== 核心函式 ====================
 sem = asyncio.Semaphore(5)
@@ -211,6 +223,49 @@ def add_to_log(symbol, timeframe, action, level, price, time_obj, emoji):
     except Exception as e:
         log_and_show_error(e, "add_to_log")
 
+# 新增：自訂通知檢查函式
+async def check_custom_notifications(price_map):
+    try:
+        r_levels = [round(0.5 * i, 1) for i in range(2, 41)]  # 1.0 到 20.0
+        for custom in st.session_state.custom_notifications[:]:
+            if not custom.get('active', True):
+                continue
+            symbol = custom['symbol']
+            if symbol not in price_map:
+                continue
+            curr_price = price_map[symbol]
+            entry = custom['entry_price']
+            sl = custom['stop_loss_price']
+            risk = abs(entry - sl)
+            if risk == 0:
+                continue
+            is_long = entry > sl
+            favorable_dir = 1 if is_long else -1
+            current_r = favorable_dir * (curr_price - entry) / risk
+
+            if current_r > custom.get('max_reached_r', 0):
+                custom['max_reached_r'] = round(current_r, 2)
+
+            notified = custom.setdefault('notified_levels', set())
+
+            # 止損檢查
+            if current_r <= -0.99 and 'SL' not in notified:
+                msg = f"🛑 {symbol} 自訂警報 - 已觸及 Stop Loss！\n價格：{curr_price:.4f} (-1R)"
+                await send_notification(msg)
+                add_to_log(symbol, '自訂', 'sell', '止損', curr_price, datetime.now(), '🛑')
+                notified.add('SL')
+
+            # R 水平檢查
+            for r in r_levels:
+                if current_r >= r - 0.01 and r not in notified:
+                    target = entry + favorable_dir * r * risk
+                    msg = f"🎯 {symbol} 自訂警報 - 達到 {r}R！\n價格：{curr_price:.4f}"
+                    await send_notification(msg)
+                    add_to_log(symbol, '自訂', 'buy', f'{r}R', curr_price, datetime.now(), '🎯')
+                    notified.add(r)
+    except Exception as e:
+        log_and_show_error(e, "check_custom_notifications")
+
 # ==================== 主分析流程 ====================
 async def run_analysis_async():
     try:
@@ -273,10 +328,13 @@ async def run_analysis_async():
                     signal_str = emoji
                     last_signal_emoji[symbol][timeframe] = emoji
                     
-                    if last_signals[symbol][timeframe][key] is None or closed_candle['timestamp'] > last_signals[symbol][timeframe][key]:
+                    # === 只警報一次，直到相反信號出現 ===
+                    if (last_signals[symbol][timeframe]['last_buy_ts'] is None or 
+                        closed_candle['timestamp'] > last_signals[symbol][timeframe]['last_buy_ts']):
                         msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                         await send_notification(msg)
-                        last_signals[symbol][timeframe][key] = closed_candle['timestamp']
+                        last_signals[symbol][timeframe]['last_buy_ts'] = closed_candle['timestamp']
+                        last_signals[symbol][timeframe]['last_sell_ts'] = None
                         
                         st.session_state.new_signal_detected = True
                         st.toast(f"{emoji} {symbol} {timeframe} 買入信號!", icon="🟢")
@@ -300,10 +358,13 @@ async def run_analysis_async():
                     signal_str = emoji
                     last_signal_emoji[symbol][timeframe] = emoji
                     
-                    if last_signals[symbol][timeframe][key] is None or closed_candle['timestamp'] > last_signals[symbol][timeframe][key]:
+                    # === 只警報一次，直到相反信號出現 ===
+                    if (last_signals[symbol][timeframe]['last_sell_ts'] is None or 
+                        closed_candle['timestamp'] > last_signals[symbol][timeframe]['last_sell_ts']):
                         msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                         await send_notification(msg)
-                        last_signals[symbol][timeframe][key] = closed_candle['timestamp']
+                        last_signals[symbol][timeframe]['last_sell_ts'] = closed_candle['timestamp']
+                        last_signals[symbol][timeframe]['last_buy_ts'] = None
                         
                         st.session_state.new_signal_detected = True
                         st.toast(f"{emoji} {symbol} {timeframe} 賣出信號!", icon="🔴")
@@ -313,6 +374,7 @@ async def run_analysis_async():
                             last_signals[symbol][timeframe]['pending_sell'] = closed_candle['timestamp']
                 
                 else:
+                    # 原有 else 邏輯完全不變
                     if last_signal_emoji[symbol][timeframe] is not None:
                         last_sig_time = None
                         search_range = len(df)
@@ -388,6 +450,14 @@ async def run_analysis_async():
                 symbol_summary['時間'] = latest_time_disp.strftime('%H:%M')
             summary.append(symbol_summary)
             
+        # 新增：更新最新價格並檢查自訂通知
+        price_map = {}
+        for symbol in SYMBOLS:
+            if symbol in dfs and '5m' in dfs[symbol] and len(dfs[symbol]['5m']) > 0:
+                price_map[symbol] = dfs[symbol]['5m'].iloc[-1]['close']
+        st.session_state.current_prices = price_map
+        await check_custom_notifications(price_map)
+
         print(f"[{time.strftime('%H:%M:%S')}] ✅ 檢查完成 (耗時 {time.time()-start_time:.2f}秒)")
         return pd.DataFrame(summary), dfs
     except Exception as e:
@@ -460,7 +530,63 @@ else:
 log_html += "</div>"
 st.markdown(log_html, unsafe_allow_html=True)
 
-# ==================== 💰 收益計算模型 (新增功能) ====================
+# ==================== 📊 自訂交易通知（你要求的新功能） ====================
+st.markdown("### 📊 自訂交易通知")
+
+col1, col2, col3 = st.columns([2, 2, 1])
+with col1:
+    custom_symbol = st.selectbox('選擇幣種', SYMBOLS, key='custom_symbol_sel')
+with col2:
+    entry_price = st.number_input('Entry Price', value=0.0, format="%.4f", key='entry_price')
+with col3:
+    sl_price = st.number_input('Stop Loss Price', value=0.0, format="%.4f", key='sl_price')
+
+if st.button('✅ 建立此自訂通知'):
+    if entry_price > 0 and sl_price > 0 and abs(entry_price - sl_price) > 0.00001:
+        new_custom = {
+            'id': int(time.time()*1000),
+            'symbol': custom_symbol,
+            'entry_price': entry_price,
+            'stop_loss_price': sl_price,
+            'active': True,
+            'max_reached_r': 0.0,
+            'notified_levels': set()
+        }
+        st.session_state.custom_notifications.append(new_custom)
+        st.success(f'已建立 {custom_symbol} 自訂通知')
+        st.rerun()
+
+st.subheader("進行中的自訂通知")
+active = [c for c in st.session_state.custom_notifications if c.get('active', True)]
+if not active:
+    st.info("尚無進行中的自訂通知")
+else:
+    for custom in active:
+        sym = custom['symbol']
+        curr_p = st.session_state.current_prices.get(sym)
+        if curr_p:
+            entry = custom['entry_price']
+            sl = custom['stop_loss_price']
+            risk = abs(entry - sl)
+            is_long = entry > sl
+            fav_dir = 1 if is_long else -1
+            curr_r = fav_dir * (curr_p - entry) / risk if risk > 0 else 0
+            r_text = f"{curr_r:.2f}R"
+        else:
+            r_text = "N/A"
+        col_a, col_b, col_c = st.columns([3,3,1])
+        with col_a:
+            st.write(f"**{sym}** | Entry **{custom['entry_price']:.4f}** | SL **{custom['stop_loss_price']:.4f}**")
+        with col_b:
+            st.write(f"目前價格 **{curr_p:.4f if curr_p else 'N/A'}** | **目前 {r_text}**")
+        with col_c:
+            if st.button("已完成", key=f"done_{custom['id']}"):
+                custom['active'] = False
+                st.success("已完結此通知")
+                st.rerun()
+        st.divider()
+
+# ==================== 收益計算模型 ====================
 st.markdown("### 💰 收益計算模型")
 
 risk_amount = st.number_input(
