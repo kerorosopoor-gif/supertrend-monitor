@@ -52,7 +52,8 @@ def get_empty_signal_structure():
         'sell_0': None, 'sell_1': None, 'sell_2': None, 'sell_3': None,
         'pending_buy': None, 'pending_sell': None,
         'last_buy_ts': None, 'last_sell_ts': None,
-        'last_alerted_direction': None
+        'last_alerted_direction': None,   # 'buy' 或 'sell'
+        'last_alert_ts': None             # 最後發送的 timestamp（雙重鎖定）
     }
 
 if 'last_signals' not in st.session_state:
@@ -65,7 +66,7 @@ else:
             if tf not in st.session_state.last_signals[symbol]:
                 st.session_state.last_signals[symbol][tf] = get_empty_signal_structure()
             else:
-                for k in ['last_buy_ts', 'last_sell_ts', 'last_alerted_direction']:
+                for k in ['last_buy_ts', 'last_sell_ts', 'last_alerted_direction', 'last_alert_ts']:
                     if k not in st.session_state.last_signals[symbol][tf]:
                         st.session_state.last_signals[symbol][tf][k] = None
 
@@ -265,6 +266,8 @@ async def run_analysis_async():
             emoji = ''
             signal_str = '無'
 
+            current_ts = closed_candle['timestamp']
+
             if buy_signal:
                 last_signals[symbol][timeframe]['pending_sell'] = None
                 count = buy_smma_count
@@ -276,16 +279,22 @@ async def run_analysis_async():
                 signal_str = emoji
                 last_signal_emoji[symbol][timeframe] = emoji
 
-                if last_signals[symbol][timeframe].get('last_alerted_direction') != 'buy':
+                # === 雙重鎖定：方向 + timestamp ===
+                alerted_dir = last_signals[symbol][timeframe].get('last_alerted_direction')
+                alerted_ts = last_signals[symbol][timeframe].get('last_alert_ts')
+                if alerted_dir != 'buy' or alerted_ts is None or current_ts > alerted_ts:
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
                     last_signals[symbol][timeframe]['last_alerted_direction'] = 'buy'
+                    last_signals[symbol][timeframe]['last_alert_ts'] = current_ts
                     last_signals[symbol][timeframe]['last_sell_ts'] = None
+
                     st.session_state.new_signal_detected = True
                     st.toast(f"{emoji} {symbol} {timeframe} 買入信號!", icon="🟢")
-                    add_to_log(symbol, timeframe, 'buy', level, closed_candle['close'], closed_candle['timestamp'], emoji)
+                    add_to_log(symbol, timeframe, 'buy', level, closed_candle['close'], current_ts, emoji)
+
                     if count < 3:
-                        last_signals[symbol][timeframe]['pending_buy'] = closed_candle['timestamp']
+                        last_signals[symbol][timeframe]['pending_buy'] = current_ts
 
             elif sell_signal:
                 last_signals[symbol][timeframe]['pending_buy'] = None
@@ -298,19 +307,24 @@ async def run_analysis_async():
                 signal_str = emoji
                 last_signal_emoji[symbol][timeframe] = emoji
 
-                if last_signals[symbol][timeframe].get('last_alerted_direction') != 'sell':
+                alerted_dir = last_signals[symbol][timeframe].get('last_alerted_direction')
+                alerted_ts = last_signals[symbol][timeframe].get('last_alert_ts')
+                if alerted_dir != 'sell' or alerted_ts is None or current_ts > alerted_ts:
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
                     last_signals[symbol][timeframe]['last_alerted_direction'] = 'sell'
+                    last_signals[symbol][timeframe]['last_alert_ts'] = current_ts
                     last_signals[symbol][timeframe]['last_buy_ts'] = None
+
                     st.session_state.new_signal_detected = True
                     st.toast(f"{emoji} {symbol} {timeframe} 賣出信號!", icon="🔴")
-                    add_to_log(symbol, timeframe, 'sell', level, closed_candle['close'], closed_candle['timestamp'], emoji)
+                    add_to_log(symbol, timeframe, 'sell', level, closed_candle['close'], current_ts, emoji)
+
                     if count < 3:
-                        last_signals[symbol][timeframe]['pending_sell'] = closed_candle['timestamp']
+                        last_signals[symbol][timeframe]['pending_sell'] = current_ts
 
             else:
-                # ==================== 加強版歷史信號抓取 ====================
+                # 歷史信號回溯（加強版）
                 if last_signal_emoji[symbol][timeframe] is not None:
                     last_sig_time = None
                     for i in range(len(df) - 3, -1, -1):
@@ -321,23 +335,16 @@ async def run_analysis_async():
                     signal_str = last_signal_emoji[symbol][timeframe] + (f' ({last_sig_time})' if last_sig_time else ' (無時間)')
                 else:
                     found_history = False
-                    last_sig_time = None
-                    for i in range(len(df) - 1, -1, -1):   # 從最新往前找
+                    for i in range(len(df) - 1, -1, -1):
                         try:
                             row = df.iloc[i]
                             if row['buy_signal'] or row['sell_signal']:
                                 past_smma_list = [row['smma60'], row['smma100'], row['smma200']]
                                 count = sum(row['close'] > sma for sma in past_smma_list) if row['buy_signal'] else sum(row['close'] < sma for sma in past_smma_list)
                                 if row['buy_signal']:
-                                    if count == 3: emoji = '🟢🟢🟢'
-                                    elif count == 2: emoji = '🟢🟢'
-                                    elif count == 1: emoji = '🟢'
-                                    else: emoji = '🟡'
+                                    emoji = '🟢🟢🟢' if count == 3 else '🟢🟢' if count == 2 else '🟢' if count == 1 else '🟡'
                                 else:
-                                    if count == 3: emoji = '🔴🔴🔴'
-                                    elif count == 2: emoji = '🔴🔴'
-                                    elif count == 1: emoji = '🔴'
-                                    else: emoji = '🟡'
+                                    emoji = '🔴🔴🔴' if count == 3 else '🔴🔴' if count == 2 else '🔴' if count == 1 else '🟡'
                                 last_signal_emoji[symbol][timeframe] = emoji
                                 last_sig_time = row['timestamp'].strftime('%m/%d %H:%M')
                                 signal_str = emoji + f' ({last_sig_time})'
