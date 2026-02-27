@@ -52,7 +52,7 @@ def get_empty_signal_structure():
         'sell_0': None, 'sell_1': None, 'sell_2': None, 'sell_3': None,
         'pending_buy': None, 'pending_sell': None,
         'last_buy_ts': None, 'last_sell_ts': None,
-        'last_alerted_direction': None   # 新增：關鍵防重複機制 ('buy' / 'sell' / None)
+        'last_alerted_direction': None
     }
 
 if 'last_signals' not in st.session_state:
@@ -276,17 +276,14 @@ async def run_analysis_async():
                 signal_str = emoji
                 last_signal_emoji[symbol][timeframe] = emoji
 
-                # === 只在方向改變時才發通知（核心防重複） ===
                 if last_signals[symbol][timeframe].get('last_alerted_direction') != 'buy':
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
                     last_signals[symbol][timeframe]['last_alerted_direction'] = 'buy'
                     last_signals[symbol][timeframe]['last_sell_ts'] = None
-
                     st.session_state.new_signal_detected = True
                     st.toast(f"{emoji} {symbol} {timeframe} 買入信號!", icon="🟢")
                     add_to_log(symbol, timeframe, 'buy', level, closed_candle['close'], closed_candle['timestamp'], emoji)
-
                     if count < 3:
                         last_signals[symbol][timeframe]['pending_buy'] = closed_candle['timestamp']
 
@@ -306,15 +303,14 @@ async def run_analysis_async():
                     await send_notification(msg)
                     last_signals[symbol][timeframe]['last_alerted_direction'] = 'sell'
                     last_signals[symbol][timeframe]['last_buy_ts'] = None
-
                     st.session_state.new_signal_detected = True
                     st.toast(f"{emoji} {symbol} {timeframe} 賣出信號!", icon="🔴")
                     add_to_log(symbol, timeframe, 'sell', level, closed_candle['close'], closed_candle['timestamp'], emoji)
-
                     if count < 3:
                         last_signals[symbol][timeframe]['pending_sell'] = closed_candle['timestamp']
 
             else:
+                # ==================== 加強版歷史信號抓取 ====================
                 if last_signal_emoji[symbol][timeframe] is not None:
                     last_sig_time = None
                     for i in range(len(df) - 3, -1, -1):
@@ -324,7 +320,33 @@ async def run_analysis_async():
                             break
                     signal_str = last_signal_emoji[symbol][timeframe] + (f' ({last_sig_time})' if last_sig_time else ' (無時間)')
                 else:
-                    signal_str = "無歷史信號"
+                    found_history = False
+                    last_sig_time = None
+                    for i in range(len(df) - 1, -1, -1):   # 從最新往前找
+                        try:
+                            row = df.iloc[i]
+                            if row['buy_signal'] or row['sell_signal']:
+                                past_smma_list = [row['smma60'], row['smma100'], row['smma200']]
+                                count = sum(row['close'] > sma for sma in past_smma_list) if row['buy_signal'] else sum(row['close'] < sma for sma in past_smma_list)
+                                if row['buy_signal']:
+                                    if count == 3: emoji = '🟢🟢🟢'
+                                    elif count == 2: emoji = '🟢🟢'
+                                    elif count == 1: emoji = '🟢'
+                                    else: emoji = '🟡'
+                                else:
+                                    if count == 3: emoji = '🔴🔴🔴'
+                                    elif count == 2: emoji = '🔴🔴'
+                                    elif count == 1: emoji = '🔴'
+                                    else: emoji = '🟡'
+                                last_signal_emoji[symbol][timeframe] = emoji
+                                last_sig_time = row['timestamp'].strftime('%m/%d %H:%M')
+                                signal_str = emoji + f' ({last_sig_time})'
+                                found_history = True
+                                break
+                        except:
+                            pass
+                    if not found_history:
+                        signal_str = "無歷史信號"
 
             if timeframe == '5m':
                 last_sig_idx = -1
@@ -412,11 +434,7 @@ with st.form("custom_form"):
     with col3: sl_price = st.number_input('Stop Loss Price', value=0.0, format="%.4f", key='sl_price')
     if st.form_submit_button('✅ 建立此自訂通知'):
         if entry_price > 0 and sl_price > 0 and abs(entry_price - sl_price) > 0.00001:
-            new_custom = {
-                'id': int(time.time()*1000), 'symbol': custom_symbol,
-                'entry_price': entry_price, 'stop_loss_price': sl_price,
-                'active': True, 'max_reached_r': 0.0, 'notified_levels': set()
-            }
+            new_custom = {'id': int(time.time()*1000), 'symbol': custom_symbol, 'entry_price': entry_price, 'stop_loss_price': sl_price, 'active': True, 'max_reached_r': 0.0, 'notified_levels': set()}
             st.session_state.custom_notifications.append(new_custom)
             st.success(f'已建立 {custom_symbol} 自訂通知')
             st.rerun()
