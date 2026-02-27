@@ -51,7 +51,8 @@ def get_empty_signal_structure():
         'buy_0': None, 'buy_1': None, 'buy_2': None, 'buy_3': None,
         'sell_0': None, 'sell_1': None, 'sell_2': None, 'sell_3': None,
         'pending_buy': None, 'pending_sell': None,
-        'last_buy_ts': None, 'last_sell_ts': None
+        'last_buy_ts': None, 'last_sell_ts': None,
+        'last_alerted_direction': None   # 新增：關鍵防重複機制 ('buy' / 'sell' / None)
     }
 
 if 'last_signals' not in st.session_state:
@@ -64,7 +65,7 @@ else:
             if tf not in st.session_state.last_signals[symbol]:
                 st.session_state.last_signals[symbol][tf] = get_empty_signal_structure()
             else:
-                for k in ['last_buy_ts', 'last_sell_ts']:
+                for k in ['last_buy_ts', 'last_sell_ts', 'last_alerted_direction']:
                     if k not in st.session_state.last_signals[symbol][tf]:
                         st.session_state.last_signals[symbol][tf][k] = None
 
@@ -248,12 +249,14 @@ async def run_analysis_async():
             df = calculate_smmas(df)
             current_candle = df.iloc[-1]
             closed_candle = df.iloc[-2]
+
             if timeframe == '5m':
                 latest_close_disp = current_candle['close']
                 latest_time_disp = current_candle['timestamp']
             elif latest_close_disp is None and timeframe == '15m':
                 latest_close_disp = current_candle['close']
                 latest_time_disp = current_candle['timestamp']
+
             smma_list = [closed_candle['smma60'], closed_candle['smma100'], closed_candle['smma200']]
             buy_smma_count = sum(closed_candle['close'] > sma for sma in smma_list)
             sell_smma_count = sum(closed_candle['close'] < sma for sma in smma_list)
@@ -261,6 +264,7 @@ async def run_analysis_async():
             sell_signal = closed_candle['sell_signal']
             emoji = ''
             signal_str = '無'
+
             if buy_signal:
                 last_signals[symbol][timeframe]['pending_sell'] = None
                 count = buy_smma_count
@@ -268,18 +272,24 @@ async def run_analysis_async():
                 elif count == 2: key, level, emoji = 'buy_2', '很強買入', '🟢🟢'
                 elif count == 1: key, level, emoji = 'buy_1', '強買入', '🟢'
                 else: key, level, emoji = 'buy_0', '留意買入', '🟡'
+
                 signal_str = emoji
                 last_signal_emoji[symbol][timeframe] = emoji
-                if (last_signals[symbol][timeframe]['last_buy_ts'] is None or closed_candle['timestamp'] > last_signals[symbol][timeframe]['last_buy_ts']):
+
+                # === 只在方向改變時才發通知（核心防重複） ===
+                if last_signals[symbol][timeframe].get('last_alerted_direction') != 'buy':
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
-                    last_signals[symbol][timeframe]['last_buy_ts'] = closed_candle['timestamp']
+                    last_signals[symbol][timeframe]['last_alerted_direction'] = 'buy'
                     last_signals[symbol][timeframe]['last_sell_ts'] = None
+
                     st.session_state.new_signal_detected = True
                     st.toast(f"{emoji} {symbol} {timeframe} 買入信號!", icon="🟢")
                     add_to_log(symbol, timeframe, 'buy', level, closed_candle['close'], closed_candle['timestamp'], emoji)
+
                     if count < 3:
                         last_signals[symbol][timeframe]['pending_buy'] = closed_candle['timestamp']
+
             elif sell_signal:
                 last_signals[symbol][timeframe]['pending_buy'] = None
                 count = sell_smma_count
@@ -287,18 +297,23 @@ async def run_analysis_async():
                 elif count == 2: key, level, emoji = 'sell_2', '很強賣出', '🔴🔴'
                 elif count == 1: key, level, emoji = 'sell_1', '強賣出', '🔴'
                 else: key, level, emoji = 'sell_0', '留意賣出', '🟡'
+
                 signal_str = emoji
                 last_signal_emoji[symbol][timeframe] = emoji
-                if (last_signals[symbol][timeframe]['last_sell_ts'] is None or closed_candle['timestamp'] > last_signals[symbol][timeframe]['last_sell_ts']):
+
+                if last_signals[symbol][timeframe].get('last_alerted_direction') != 'sell':
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
-                    last_signals[symbol][timeframe]['last_sell_ts'] = closed_candle['timestamp']
+                    last_signals[symbol][timeframe]['last_alerted_direction'] = 'sell'
                     last_signals[symbol][timeframe]['last_buy_ts'] = None
+
                     st.session_state.new_signal_detected = True
                     st.toast(f"{emoji} {symbol} {timeframe} 賣出信號!", icon="🔴")
                     add_to_log(symbol, timeframe, 'sell', level, closed_candle['close'], closed_candle['timestamp'], emoji)
+
                     if count < 3:
                         last_signals[symbol][timeframe]['pending_sell'] = closed_candle['timestamp']
+
             else:
                 if last_signal_emoji[symbol][timeframe] is not None:
                     last_sig_time = None
@@ -310,6 +325,7 @@ async def run_analysis_async():
                     signal_str = last_signal_emoji[symbol][timeframe] + (f' ({last_sig_time})' if last_sig_time else ' (無時間)')
                 else:
                     signal_str = "無歷史信號"
+
             if timeframe == '5m':
                 last_sig_idx = -1
                 for i in range(len(df) - 2, -1, -1):
@@ -328,8 +344,10 @@ async def run_analysis_async():
                     time_str, dur_str = "無", "N/A"
                 symbol_summary['上次信號'] = time_str
                 symbol_summary['持續'] = dur_str
+
             symbol_summary[f'{timeframe} 信號'] = signal_str
             dfs[symbol][timeframe] = df
+
         if latest_close_disp is not None:
             symbol_summary['價格'] = f"{latest_close_disp:.4f}"
             symbol_summary['時間'] = latest_time_disp.strftime('%H:%M')
@@ -338,6 +356,7 @@ async def run_analysis_async():
     price_map = {symbol: dfs[symbol]['5m'].iloc[-1]['close'] for symbol in SYMBOLS if symbol in dfs and '5m' in dfs[symbol] and len(dfs[symbol]['5m']) > 0}
     st.session_state.current_prices = price_map
     await check_custom_notifications(price_map)
+
     print(f"[{time.strftime('%H:%M:%S')}] ✅ 檢查完成 (耗時 {time.time()-start_time:.2f}秒)")
     return pd.DataFrame(summary), dfs
 
