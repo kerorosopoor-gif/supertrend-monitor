@@ -226,11 +226,7 @@ async def check_custom_notifications(price_map):
     except Exception as e:
         log_and_show_error(e, "check_custom_notifications")
 
-# ==================== 主分析流程（快取優化） ====================
-@st.cache_data(ttl=300, show_spinner=False)
-def run_analysis_cached():
-    return asyncio.run(run_analysis_async())
-
+# ==================== 主分析流程 ====================
 async def run_analysis_async():
     start_time = time.time()
     print(f"\n[{time.strftime('%H:%M:%S')}] 🚀 開始新一輪檢查...")
@@ -351,7 +347,10 @@ st_autorefresh(interval=300000, key="data_refresh")
 
 st.title('🚀 SuperTrend Pro 監控 - MEXC 版')
 
-summary_df, dfs_dict = run_analysis_cached()
+try:
+    summary_df, dfs_dict = asyncio.run(run_analysis_async())
+except Exception as e:
+    log_and_show_error(e, "asyncio.run(run_analysis_async)")
 
 st.dataframe(summary_df, use_container_width=True, hide_index=True,
              column_config={"價格": st.column_config.TextColumn("價格", help="最新 5m 價格")})
