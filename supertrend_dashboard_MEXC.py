@@ -496,4 +496,14 @@ if selected_symbol in dfs_dict and selected_timeframe in dfs_dict[selected_symbo
             fig.add_trace(go.Scatter(x=df['timestamp'], y=df['st_lower'], line=dict(color='lime'), name='多頭支撐'))
             fig.add_trace(go.Scatter(x=df['timestamp'], y=df['st_upper'], line=dict(color='red'), name='空頭壓力'))
             buy_df = df[df['buy_signal'] == 1]
-            sell_df =
+            sell_df = df[df['sell_signal'] == 1]
+            fig.add_trace(go.Scatter(x=buy_df['timestamp'], y=buy_df['low'], mode='markers', marker=dict(symbol='triangle-up', size=12, color='green'), name='買入確認'))
+            fig.add_trace(go.Scatter(x=sell_df['timestamp'], y=sell_df['high'], mode='markers', marker=dict(symbol='triangle-down', size=12, color='red'), name='賣出確認'))
+            fig.update_layout(height=600, title=f"{selected_symbol} {selected_timeframe}", xaxis_rangeslider_visible=False, hovermode='x unified')
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            log_and_show_error(e, f"繪製圖表 for {selected_symbol} {selected_timeframe}")
+    else:
+        st.warning(f"⚠️ {selected_symbol} {selected_timeframe} 目前無法顯示 (資料 N/A)")
+else:
+    st.warning(f"⚠️ {selected_symbol} {selected_timeframe} 資料暫時無法取得。")
