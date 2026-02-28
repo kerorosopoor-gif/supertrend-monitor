@@ -52,7 +52,8 @@ def get_empty_signal_structure():
         'sell_0': None, 'sell_1': None, 'sell_2': None, 'sell_3': None,
         'pending_buy': None, 'pending_sell': None,
         'last_buy_ts': None, 'last_sell_ts': None,
-        'last_alerted_direction': None   # 只用這個方向鎖定即可（最可靠）
+        'last_alerted_direction': None,
+        'last_alerted_ts': None   # 新增：時間戳鎖定，防止同一根K線重複通知
     }
 
 if 'last_signals' not in st.session_state:
@@ -65,7 +66,7 @@ else:
             if tf not in st.session_state.last_signals[symbol]:
                 st.session_state.last_signals[symbol][tf] = get_empty_signal_structure()
             else:
-                for k in ['last_buy_ts', 'last_sell_ts', 'last_alerted_direction']:
+                for k in ['last_buy_ts', 'last_sell_ts', 'last_alerted_direction', 'last_alerted_ts']:
                     if k not in st.session_state.last_signals[symbol][tf]:
                         st.session_state.last_signals[symbol][tf][k] = None
 
@@ -249,6 +250,9 @@ async def run_analysis_async():
             df = calculate_smmas(df)
             current_candle = df.iloc[-1]
             closed_candle = df.iloc[-2]
+            
+            # 用於重複判斷的時間戳字串
+            current_signal_ts = str(closed_candle['timestamp'])
 
             if timeframe == '5m':
                 latest_close_disp = current_candle['close']
@@ -276,11 +280,13 @@ async def run_analysis_async():
                 signal_str = emoji
                 last_signal_emoji[symbol][timeframe] = emoji
 
-                # === 只在方向改變時才發送（徹底防重複） ===
-                if last_signals[symbol][timeframe].get('last_alerted_direction') != 'buy':
+                # === 核心防重複邏輯：方向改變 OR 同方向但時間戳不同 ===
+                state = last_signals[symbol][timeframe]
+                if state.get('last_alerted_direction') != 'buy' or state.get('last_alerted_ts') != current_signal_ts:
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
                     last_signals[symbol][timeframe]['last_alerted_direction'] = 'buy'
+                    last_signals[symbol][timeframe]['last_alerted_ts'] = current_signal_ts
                     last_signals[symbol][timeframe]['last_sell_ts'] = None
 
                     st.session_state.new_signal_detected = True
@@ -301,10 +307,13 @@ async def run_analysis_async():
                 signal_str = emoji
                 last_signal_emoji[symbol][timeframe] = emoji
 
-                if last_signals[symbol][timeframe].get('last_alerted_direction') != 'sell':
+                # === 核心防重複邏輯：方向改變 OR 同方向但時間戳不同 ===
+                state = last_signals[symbol][timeframe]
+                if state.get('last_alerted_direction') != 'sell' or state.get('last_alerted_ts') != current_signal_ts:
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
                     last_signals[symbol][timeframe]['last_alerted_direction'] = 'sell'
+                    last_signals[symbol][timeframe]['last_alerted_ts'] = current_signal_ts
                     last_signals[symbol][timeframe]['last_buy_ts'] = None
 
                     st.session_state.new_signal_detected = True
