@@ -52,8 +52,7 @@ def get_empty_signal_structure():
         'sell_0': None, 'sell_1': None, 'sell_2': None, 'sell_3': None,
         'pending_buy': None, 'pending_sell': None,
         'last_buy_ts': None, 'last_sell_ts': None,
-        'last_alerted_direction': None,   # 'buy' 或 'sell'
-        'last_alert_ts': None             # 最後發送的 timestamp（雙重鎖定）
+        'last_alerted_direction': None   # 只用這個方向鎖定即可（最可靠）
     }
 
 if 'last_signals' not in st.session_state:
@@ -66,7 +65,7 @@ else:
             if tf not in st.session_state.last_signals[symbol]:
                 st.session_state.last_signals[symbol][tf] = get_empty_signal_structure()
             else:
-                for k in ['last_buy_ts', 'last_sell_ts', 'last_alerted_direction', 'last_alert_ts']:
+                for k in ['last_buy_ts', 'last_sell_ts', 'last_alerted_direction']:
                     if k not in st.session_state.last_signals[symbol][tf]:
                         st.session_state.last_signals[symbol][tf][k] = None
 
@@ -266,8 +265,6 @@ async def run_analysis_async():
             emoji = ''
             signal_str = '無'
 
-            current_ts = closed_candle['timestamp']
-
             if buy_signal:
                 last_signals[symbol][timeframe]['pending_sell'] = None
                 count = buy_smma_count
@@ -279,22 +276,19 @@ async def run_analysis_async():
                 signal_str = emoji
                 last_signal_emoji[symbol][timeframe] = emoji
 
-                # === 雙重鎖定：方向 + timestamp ===
-                alerted_dir = last_signals[symbol][timeframe].get('last_alerted_direction')
-                alerted_ts = last_signals[symbol][timeframe].get('last_alert_ts')
-                if alerted_dir != 'buy' or alerted_ts is None or current_ts > alerted_ts:
+                # === 只在方向改變時才發送（徹底防重複） ===
+                if last_signals[symbol][timeframe].get('last_alerted_direction') != 'buy':
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
                     last_signals[symbol][timeframe]['last_alerted_direction'] = 'buy'
-                    last_signals[symbol][timeframe]['last_alert_ts'] = current_ts
                     last_signals[symbol][timeframe]['last_sell_ts'] = None
 
                     st.session_state.new_signal_detected = True
                     st.toast(f"{emoji} {symbol} {timeframe} 買入信號!", icon="🟢")
-                    add_to_log(symbol, timeframe, 'buy', level, closed_candle['close'], current_ts, emoji)
+                    add_to_log(symbol, timeframe, 'buy', level, closed_candle['close'], closed_candle['timestamp'], emoji)
 
                     if count < 3:
-                        last_signals[symbol][timeframe]['pending_buy'] = current_ts
+                        last_signals[symbol][timeframe]['pending_buy'] = closed_candle['timestamp']
 
             elif sell_signal:
                 last_signals[symbol][timeframe]['pending_buy'] = None
@@ -307,24 +301,21 @@ async def run_analysis_async():
                 signal_str = emoji
                 last_signal_emoji[symbol][timeframe] = emoji
 
-                alerted_dir = last_signals[symbol][timeframe].get('last_alerted_direction')
-                alerted_ts = last_signals[symbol][timeframe].get('last_alert_ts')
-                if alerted_dir != 'sell' or alerted_ts is None or current_ts > alerted_ts:
+                if last_signals[symbol][timeframe].get('last_alerted_direction') != 'sell':
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
                     last_signals[symbol][timeframe]['last_alerted_direction'] = 'sell'
-                    last_signals[symbol][timeframe]['last_alert_ts'] = current_ts
                     last_signals[symbol][timeframe]['last_buy_ts'] = None
 
                     st.session_state.new_signal_detected = True
                     st.toast(f"{emoji} {symbol} {timeframe} 賣出信號!", icon="🔴")
-                    add_to_log(symbol, timeframe, 'sell', level, closed_candle['close'], current_ts, emoji)
+                    add_to_log(symbol, timeframe, 'sell', level, closed_candle['close'], closed_candle['timestamp'], emoji)
 
                     if count < 3:
-                        last_signals[symbol][timeframe]['pending_sell'] = current_ts
+                        last_signals[symbol][timeframe]['pending_sell'] = closed_candle['timestamp']
 
             else:
-                # 歷史信號回溯（加強版）
+                # 加強版歷史信號抓取
                 if last_signal_emoji[symbol][timeframe] is not None:
                     last_sig_time = None
                     for i in range(len(df) - 3, -1, -1):
@@ -505,14 +496,4 @@ if selected_symbol in dfs_dict and selected_timeframe in dfs_dict[selected_symbo
             fig.add_trace(go.Scatter(x=df['timestamp'], y=df['st_lower'], line=dict(color='lime'), name='多頭支撐'))
             fig.add_trace(go.Scatter(x=df['timestamp'], y=df['st_upper'], line=dict(color='red'), name='空頭壓力'))
             buy_df = df[df['buy_signal'] == 1]
-            sell_df = df[df['sell_signal'] == 1]
-            fig.add_trace(go.Scatter(x=buy_df['timestamp'], y=buy_df['low'], mode='markers', marker=dict(symbol='triangle-up', size=12, color='green'), name='買入確認'))
-            fig.add_trace(go.Scatter(x=sell_df['timestamp'], y=sell_df['high'], mode='markers', marker=dict(symbol='triangle-down', size=12, color='red'), name='賣出確認'))
-            fig.update_layout(height=600, title=f"{selected_symbol} {selected_timeframe}", xaxis_rangeslider_visible=False, hovermode='x unified')
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            log_and_show_error(e, f"繪製圖表 for {selected_symbol} {selected_timeframe}")
-    else:
-        st.warning(f"⚠️ {selected_symbol} {selected_timeframe} 目前無法顯示 (資料 N/A)")
-else:
-    st.warning(f"⚠️ {selected_symbol} {selected_timeframe} 資料暫時無法取得。")
+            sell_df =
