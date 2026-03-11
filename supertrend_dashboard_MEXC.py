@@ -1,4 +1,4 @@
-import streamlit as st
+<DOCUMENT filename="supertrend_dashboard_MEXC.py">import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import numpy as np
@@ -278,11 +278,14 @@ async def run_analysis_async():
                 last_signal_emoji[symbol][timeframe] = emoji
                 current_key = key
 
-                # 只在信號類型不同時才發送
-                if last_signals[symbol][timeframe].get('last_notified_key') != current_key:
+                # ==================== 修正重點：使用 timestamp 確保同一信號只發一次 ====================
+                signal_ts = closed_candle['timestamp']
+                last_buy_ts_val = last_signals[symbol][timeframe].get('last_buy_ts')
+                if last_buy_ts_val is None or signal_ts > last_buy_ts_val:
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
                     last_signals[symbol][timeframe]['last_notified_key'] = current_key
+                    last_signals[symbol][timeframe]['last_buy_ts'] = signal_ts
                     last_signals[symbol][timeframe]['last_sell_ts'] = None
 
                     st.session_state.new_signal_detected = True
@@ -304,10 +307,14 @@ async def run_analysis_async():
                 last_signal_emoji[symbol][timeframe] = emoji
                 current_key = key
 
-                if last_signals[symbol][timeframe].get('last_notified_key') != current_key:
+                # ==================== 修正重點：使用 timestamp 確保同一信號只發一次 ====================
+                signal_ts = closed_candle['timestamp']
+                last_sell_ts_val = last_signals[symbol][timeframe].get('last_sell_ts')
+                if last_sell_ts_val is None or signal_ts > last_sell_ts_val:
                     msg = f"{emoji} {symbol} {timeframe} SuperTrend {level}\n價格：{closed_candle['close']:.4f}"
                     await send_notification(msg)
                     last_signals[symbol][timeframe]['last_notified_key'] = current_key
+                    last_signals[symbol][timeframe]['last_sell_ts'] = signal_ts
                     last_signals[symbol][timeframe]['last_buy_ts'] = None
 
                     st.session_state.new_signal_detected = True
@@ -512,3 +519,4 @@ if selected_symbol in dfs_dict and selected_timeframe in dfs_dict[selected_symbo
         st.warning(f"⚠️ {selected_symbol} {selected_timeframe} 目前無法顯示 (資料 N/A)")
 else:
     st.warning(f"⚠️ {selected_symbol} {selected_timeframe} 資料暫時無法取得。")
+</DOCUMENT>
