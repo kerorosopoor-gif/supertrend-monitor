@@ -52,7 +52,7 @@ def get_empty_signal_structure():
         'sell_0': None, 'sell_1': None, 'sell_2': None, 'sell_3': None,
         'pending_buy': None, 'pending_sell': None,
         'last_buy_ts': None, 'last_sell_ts': None,
-        'last_notified_key': None   # 關鍵：記錄上次通知的信號類型 (buy_3 / sell_2 / None)
+        'last_notified_key': None
     }
 
 if 'last_signals' not in st.session_state:
@@ -264,7 +264,7 @@ async def run_analysis_async():
             sell_signal = closed_candle['sell_signal']
             emoji = ''
             signal_str = '無'
-            current_key = None   # 用來記錄這次信號類型
+            current_key = None
 
             if buy_signal:
                 last_signals[symbol][timeframe]['pending_sell'] = None
@@ -325,7 +325,6 @@ async def run_analysis_async():
                         last_signals[symbol][timeframe]['pending_sell'] = closed_candle['timestamp']
 
             else:
-                # 無信號 → 重置
                 last_signals[symbol][timeframe]['last_notified_key'] = None
 
                 if last_signal_emoji[symbol][timeframe] is not None:
@@ -519,4 +518,3 @@ if selected_symbol in dfs_dict and selected_timeframe in dfs_dict[selected_symbo
         st.warning(f"⚠️ {selected_symbol} {selected_timeframe} 目前無法顯示 (資料 N/A)")
 else:
     st.warning(f"⚠️ {selected_symbol} {selected_timeframe} 資料暫時無法取得。")
-</DOCUMENT>
